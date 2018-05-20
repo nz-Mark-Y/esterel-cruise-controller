@@ -18,7 +18,7 @@ module cruiseController:
 		[var accelPressed, brakePressed, accelReleased, brakeReleased, currentSpeed : float in
 			run CruiseStateFSM[On/internalOn, Off/internalOff, Resume/internalResume, Set/internalSet, accelPressed/internalAccelPressed, brakePressed/internalBrakePressed, accelReleased/internalAccelReleased, brakeReleased/internalBrakeReleased, currentSpeed/internalCurrentSpeed, CruiseState/internalCruiseState]
 			||
-			% Cruise Speed Management Flowchart
+			run CruiseSpeedFlow[On/internalOn, Set/internalSet, QuickAccel/internalQuickAccel, QuickDecel/internalQuickDecel, CruiseSpeed/internalCruiseSpeed]
 			||
 			% Car Driving Control Flowchart
 			||
@@ -40,15 +40,23 @@ module CruiseStateFSM:
 		loop
 			emit internalCruiseState <= ON;
 			await immediate internalBrakePressed or internalAccelPressed or (internalCurrentSpeed > SPEEDMAX) or (internalCurrentSpeed < SPEEDMIN);
-			if internalBrakePressed then
-				emit internalCruiseState <= STANDBY;
-				
-			else
-				emit internalCruiseState <= DISABLE;
-				
-			end if
-		end
+			loop
+				emit internalCruise = DISABLE;
+				await immediate internalBrakePressed
+				emit internalCruiseState = STANDBY;
+				await immediate internalBrakeReleased and (internalCurrentSpeed > SPEEDMAX or internalCurrent < SPEEDMIN)
+			end
+		each (internalCurrentSpeed < SPEEDMAX) and (internalCurrentSpeed > SPEEDMIN) and internalAccelReleased and internalAccelReleased
 	each internalOff
+end module
+
+module CruiseSpeedFlow:
+	input internalOn, internalSet, internalQuickAccel, internalQuickDecel;
+	output internalCruiseSpeed : float;
+	
+	loop
+		%where to put pause?
+	end
 end module
 
 module AccelPedalFSM:
