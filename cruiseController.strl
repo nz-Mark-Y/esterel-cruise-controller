@@ -1,85 +1,203 @@
-constant SPEEDMIN : float = 30.0;
-constant SPEEDMAX : float = 150.0;
-constant SPEEDINC : float = 2.5;
 constant KP : float = 8.112;
 constant KI : float = 0.5;
 constant THROTTLESATMAX : float = 45.0;
-constant PEDALSMIN : float = 3.0;
 
 type CRUISESTATES = enum { ON, OFF, STANDBY, DISABLE };
+
+module CruiseStateFSM:
+	constant SPEEDMIN : float = 30.0;
+	constant SPEEDMAX : float = 150.0;
+
+	input internalOn, internalOff, internalResume, internalSet, internalAccelPressed, internalAccelReleased, internalBrakePressed, internalBrakeReleased;
+	input internalCurrentSpeed : float;
+	output internalCruiseState: CRUISESTATES;
+	
+	var state := 0 integer in
+	emit internalCruiseState = OFF;
+	loop
+		trap T1 in
+			await internalOn or internalOff or internalResume or internalSet or internalAccelPressed or internalBrakePressed or internalAccelReleased or internalBrakeReleased or internalCurrentSpeed;
+			if state = 0 then
+				if pre(internalOn) then
+					emit internalCruiseState = ON;
+					state := 1;
+				end if;
+				exit T1;
+			end if;
+			if state = 1 then
+				if pre(brakePressed) then
+					emit internalCruiseState = STANDBY;
+					state := 2;
+				end if;
+				if pre(accelPressed) or pre(?internalCurrentSpeed) > SPEEDMAX or pre(?internalCurrentSpeed) < SPEEDMIN then
+					emit internalCruiseState = DISABLE;
+					state := 3;
+				end if;
+				if pre(internalOff) then 
+					emit internalCruiseState = OFF;
+					state := 0;
+				end if;
+				exit T1;
+			end if;
+			if state = 2 then 
+				if pre(brakeReleased) and pre(?internalCurrentSpeed) < SPEEDMAX and pre(?internalCurrentSpeed) > SPEEDMIN then
+					emit internalCruiseState = ON;
+					state := 1;
+				end if;
+				if pre(brakeReleased) and (pre(?internalCurrentSpeed) > SPEEDMAX or pre(?internalCurrentSpeed) < SPEEDMIN) then
+					emit internalCruiseState = DISABLE;
+					state := 3;
+				end if;
+				if pre(internalOff) then 
+					emit internalCruiseState = OFF;
+					state := 0;
+				end if;
+				exit T1;
+			end if;
+			if state = 3 then
+				if pre(accelReleased) and pre(?internalCurrentSpeed) < SPEEDMAX and pre(?internalCurrentSpeed) > SPEEDMIN then
+					emit internalCruiseState = ON;
+					state := 1;
+				end if;
+				if pre(brakePressed) then
+					emit internalCruiseState = STANDBY;
+					state := 2;
+				end if;
+				if pre(internalOff) then
+					emit internalCruiseState = OFF;
+					state := 0;
+				end if;
+				exit T1;
+			end if;
+		end trap
+	end loop
+	end var
+end module
+
+module CruiseSpeedFlow:
+	constant SPEEDMIN : float = 30.0;
+	constant SPEEDMAX : float = 150.0;
+	constant SPEEDINC : float = 2.5;
+
+	input internalOn, internalSet, internalQuickAccel, internalQuickDecel;
+	input internalCurrentSpeed : float;
+	output internalCruiseSpeed : float;
+	
+	var temp := 0.0 : float;
+	loop
+		await internalOn or internalSet or internalQuickAccel or internalQuickDecel
+		if internalOn or internalSet then
+			temp := internalCurrentSpeed;
+		end if;
+		if internalQuickAccel and (temp != 0.0) then
+			temp := temp += SPEEDINC;
+		end if;
+		if internalQuickDevel and (temp != 0.0) then
+			temp := temp -= SPEEDINC;
+		end if;
+		if temp > SPEEDMAX then
+			temp := SPEEDMAX;
+		end if;
+		if temp < SPEEDMIN then
+			temp := SPEEDMIN;
+		end if;
+		emit internalCruiseSpeed(temp);
+	end loop
+	end var
+end module
+
+module accelPedalFSM:
+	constant PEDALSMIN : float = 3.0;
+
+	input internalAccel : float;
+	output internalAccelPressed, internalAccelReleased;
+
+	var state := 0 : integer in
+	loop
+		trap T1 in
+			pause
+			if state = 0 then
+				present (?internalAccel > PEDALSMIN) then
+					state := 1;
+					emit internalAccelPressed;
+					exit T1;
+				end present;
+			end if;
+			if state = 1 then
+				present(?internalAccel < PEDALSMIN) then
+					state := 0;
+					emit internalAccelReleased;
+					exit T1;
+				end present;
+			end if;
+		end trap
+	end loop
+	end var
+end module
+
+module brakePedalFSM:
+	constant PEDALSMIN : float = 3.0;
+
+	input internalBrake : float;
+	output internalBrakePressed, internalBrakeReleased;
+
+	var state := 0 : integer in
+	loop
+		trap T1 in
+			pause
+			if state = 0 then
+				present (?internalBrake > PEDALSMIN) then
+					state := 1;
+					emit internalBrakePressed;
+					exit T1;
+				end present;
+			end if;
+			if state = 1 then
+				present(?internalBrake < PEDALSMIN) then
+					state := 0;
+					emit internalAccelReleased;
+					exit T1;
+				end present;
+			end if;
+		end trap
+	end loop
+	end var
+end module
 
 module cruiseController:
 	input On, Off, Resume, Set, QuickDecel, QuickAccel; 
 	input Accel : float, Brake : float, Speed : float;
 	output CruiseSpeed: float, ThrottleCmd : float, CruiseState : CRUISESTATES;
 	
-	loop
-		await immediate On;
-		[var accelPressed, brakePressed, accelReleased, brakeReleased, currentSpeed : float in
-			run CruiseStateFSM[On/internalOn, Off/internalOff, Resume/internalResume, Set/internalSet, accelPressed/internalAccelPressed, brakePressed/internalBrakePressed, accelReleased/internalAccelReleased, brakeReleased/internalBrakeReleased, currentSpeed/internalCurrentSpeed, CruiseState/internalCruiseState]
-			||
-			run CruiseSpeedFlow[On/internalOn, Set/internalSet, QuickAccel/internalQuickAccel, QuickDecel/internalQuickDecel, CruiseSpeed/internalCruiseSpeed]
-			||
-			% Car Driving Control Flowchart
-			||
-			run BrakePedalFSM[Brake/internalBrake, brakePressed/internalBrakePressed, brakeReleased/internalBrakeReleased]
-			||
-			run AccelPedalFSM[Accel/internalAccel, accelPressed/internalAccelPressed, accelReleased/internalAccelReleased]
-		end var]
-	end
+	signal currentSpeed : float in
+	signal accelPressed, brakePressed, accelReleased, brakeReleased input
+	run CruiseStateFSM[ On/internalOn,
+						Off/internalOff,
+						Resume/internalResume, 
+						Set/internalSet, 
+						accelPressed/internalAccelPressed,
+						brakePressed/internalBrakePressed, 
+						accelReleased/internalAccelReleased, 
+						brakeReleased/internalBrakeReleased, 
+						currentSpeed/internalCurrentSpeed, 
+						CruiseState/internalCruiseState]
+	||
+	run CruiseSpeedFlow[On/internalOn, 
+						Set/internalSet, 
+						QuickAccel/internalQuickAccel, 
+						QuickDecel/internalQuickDecel,
+						currentSpeed/internalCurrentSpeed, 
+						CruiseSpeed/internalCruiseSpeed]
+	||
+	% Car Driving Control Flowchart
+	||
+	run BrakePedalFSM[  Brake/internalBrake, 
+						brakePressed/internalBrakePressed, 
+						brakeReleased/internalBrakeReleased]
+	||
+	run AccelPedalFSM[  Accel/internalAccel, 
+						accelPressed/internalAccelPressed, 
+						accelReleased/internalAccelReleased]
+	end signal
+	end signal
 end module
-
-module CruiseStateFSM:
-	input internalOn, internalOff, internalResume, internalSet, internalAccelPressed, internalBrakePressed;
-	input internalCurrentSpeed : float;
-	output internalCruiseState: CRUISESTATES;
-
-	loop
-		emit internalCruiseState <= OFF;
-		await immediate internalOn;
-		loop
-			emit internalCruiseState <= ON;
-			await immediate internalBrakePressed or internalAccelPressed or (internalCurrentSpeed > SPEEDMAX) or (internalCurrentSpeed < SPEEDMIN);
-			loop
-				emit internalCruise = DISABLE;
-				await immediate internalBrakePressed
-				emit internalCruiseState = STANDBY;
-				await immediate internalBrakeReleased and (internalCurrentSpeed > SPEEDMAX or internalCurrent < SPEEDMIN)
-			end
-		each (internalCurrentSpeed < SPEEDMAX) and (internalCurrentSpeed > SPEEDMIN) and internalAccelReleased and internalAccelReleased
-	each internalOff
-end module
-
-module CruiseSpeedFlow:
-	input internalOn, internalSet, internalQuickAccel, internalQuickDecel;
-	output internalCruiseSpeed : float;
-	
-	loop
-		%where to put pause?
-	end
-end module
-
-module AccelPedalFSM:
-	input internalAccel : float;
-	output internalAccelPressed, internalAccelReleased;
-
-	loop
-		emit internalAccelReleased
-		await immediate (internalAccel > PEDALSMIN);
-		emit internalAccelPressed
-		await immediate (internalAccel <= PEDALSMIN);
-	end
-end module
-
-module brakePedalFSM:
-	input internalBrake : float;
-	output internalBrakePressed, internalBrakeReleased;
-
-	loop
-		emit internalBrakeReleased
-		await immediate (internalBrake > PEDALSMIN);
-		emit internalBrakePressed
-		await immediate (internalBrake <= PEDALSMIN);
-	end
-end module
-
