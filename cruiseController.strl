@@ -3,23 +3,40 @@ module CruiseStateFSM:
 	constant SPEEDMAX : float = 150.0;
 	constant PEDALSMIN : float = 3.0;
 
-	input internalOn, internalOff, internalResume, internalSet, internalAccel, internalBrake;
-	input internalCurrentSpeed : float;
+	input internalOn, internalOff, internalResume, internalSet;
+	input internalCurrentSpeed : float, internalBrake : float, internalAccel : float;
 	output internalCruiseState: CRUISESTATES;
 	
 	var state := 0 integer in
 	emit internalCruiseState = OFF;
 	loop
 		trap T1 in
-			await internalOn or internalOff or internalResume or internalSet or internalAccel or internalBrake or internalCurrentSpeed;
+			pause
+
+			%OFF state
 			if state = 0 then
+				%Handle state changes
 				if pre(internalOn) then
 					emit internalCruiseState = ON;
 					state := 1;
 				end if;
 				exit T1;
 			end if;
+
+			%ON state
 			if state = 1 then
+				%Call the CruiseSpeedFlow submodule
+				run CruiseSpeedFlow[internalOn/csmOn, 
+										internalSet/csmSet, 
+										QuickAccel/csmQuickAccel, 
+										QuickDecel/csmQuickDecel,
+										internalCurrentSpeed/csmCurrentSpeed, 
+										CruiseSpeed/csmCruiseSpeed]
+				%Handle state changes
+				if pre(internalOff) then 
+					emit internalCruiseState = OFF;
+					state := 0;
+				end if;
 				if pre(?internalBrake > PEDALSMIN) then
 					emit internalCruiseState = STANDBY;
 					state := 2;
@@ -28,13 +45,23 @@ module CruiseStateFSM:
 					emit internalCruiseState = DISABLE;
 					state := 3;
 				end if;
+				exit T1;
+			end if;
+
+			%STANDBY state
+			if state = 2 then
+				%Call the CruiseSpeedFlow submodule 
+				run CruiseSpeedFlow[internalOn/csmOn, 
+										internalSet/csmSet, 
+										QuickAccel/csmQuickAccel, 
+										QuickDecel/csmQuickDecel,
+										internalCurrentSpeed/csmCurrentSpeed, 
+										CruiseSpeed/csmCruiseSpeed]
+				%Handle state changes
 				if pre(internalOff) then 
 					emit internalCruiseState = OFF;
 					state := 0;
 				end if;
-				exit T1;
-			end if;
-			if state = 2 then 
 				if pre(?internalBrake < PEDALSMIN) and pre(?internalCurrentSpeed) < SPEEDMAX and pre(?internalCurrentSpeed) > SPEEDMIN then
 					emit internalCruiseState = ON;
 					state := 1;
@@ -43,13 +70,23 @@ module CruiseStateFSM:
 					emit internalCruiseState = DISABLE;
 					state := 3;
 				end if;
-				if pre(internalOff) then 
+				exit T1;
+			end if;
+
+			%DISABLE state
+			if state = 3 then
+				%Call the CruiseSpeedFlow submodule
+				run CruiseSpeedFlow[internalOn/csmOn, 
+										internalSet/csmSet, 
+										QuickAccel/csmQuickAccel, 
+										QuickDecel/csmQuickDecel,
+										internalCurrentSpeed/csmCurrentSpeed, 
+										CruiseSpeed/csmCruiseSpeed]
+				%Handle state changes
+				if pre(internalOff) then
 					emit internalCruiseState = OFF;
 					state := 0;
 				end if;
-				exit T1;
-			end if;
-			if state = 3 then
 				if pre(?internalAccel < PEDALSMIN) and pre(?internalCurrentSpeed) < SPEEDMAX and pre(?internalCurrentSpeed) > SPEEDMIN then
 					emit internalCruiseState = ON;
 					state := 1;
@@ -57,10 +94,6 @@ module CruiseStateFSM:
 				if pre(?internalBrake > PEDALSMIN) then
 					emit internalCruiseState = STANDBY;
 					state := 2;
-				end if;
-				if pre(internalOff) then
-					emit internalCruiseState = OFF;
-					state := 0;
 				end if;
 				exit T1;
 			end if;
@@ -74,30 +107,34 @@ module CruiseSpeedFlow:
 	constant SPEEDMAX : float = 150.0;
 	constant SPEEDINC : float = 2.5;
 
-	input internalOn, internalSet, internalQuickAccel, internalQuickDecel;
-	input internalCurrentSpeed : float;
-	output internalCruiseSpeed : float;
+	input csmOn, csmSet, csmQuickAccel, csmQuickDecel;
+	input csmCurrentSpeed : float;
+	output csmCruiseSpeed : float;
 	
 	var temp := 0.0 : float;
-	loop
-		await internalOn or internalSet or internalQuickAccel or internalQuickDecel
-		if internalOn or internalSet then
-			temp := internalCurrentSpeed;
-		end if;
-		if internalQuickAccel and (temp != 0.0) then
-			temp := temp += SPEEDINC;
-		end if;
-		if internalQuickDevel and (temp != 0.0) then
-			temp := temp -= SPEEDINC;
-		end if;
-		if temp > SPEEDMAX then
-			temp := SPEEDMAX;
-		end if;
-		if temp < SPEEDMIN then
-			temp := SPEEDMIN;
-		end if;
-		emit internalCruiseSpeed(temp);
-	end loop
+
+	%Setting speed
+	if csmOn or csmSet then
+		temp := csmCurrentSpeed;
+	end if;
+
+	%Handling quick accelerations/decelerations
+	if csmQuickAccel and (temp != 0.0) then
+		temp := temp += SPEEDINC;
+	end if;
+	if csmQuickDevel and (temp != 0.0) then
+		temp := temp -= SPEEDINC;
+	end if;
+
+	%Making sure speed stays within boundaries set
+	if temp > SPEEDMAX then
+		temp := SPEEDMAX;
+	end if;
+	if temp < SPEEDMIN then
+		temp := SPEEDMIN;
+	end if;
+	emit csmCruiseSpeed(temp);
+
 	end var
 end module
 
@@ -116,23 +153,23 @@ module cruiseController:
 	input Accel : float, Brake : float, Speed : float;
 	output CruiseSpeed: float, ThrottleCmd : float, CruiseState : CRUISESTATES;
 	
-	signal CurrentSpeed : float in
 	run CruiseStateFSM[ On/internalOn,
 						Off/internalOff,
 						Resume/internalResume, 
 						Set/internalSet, 
 						Accel/internalAccel,
 						Brake/internalBrake, 
-						CurrentSpeed/internalCurrentSpeed, 
+						Speed/internalCurrentSpeed,
+						speedManage/internalSpeedManage, 
 						CruiseState/internalCruiseState]
 	||
-	run CruiseSpeedFlow[On/internalOn, 
-						Set/internalSet, 
-						QuickAccel/internalQuickAccel, 
-						QuickDecel/internalQuickDecel,
-						CurrentSpeed/internalCurrentSpeed, 
-						CruiseSpeed/internalCruiseSpeed]
+	run CruiseSpeedFlow[internalOn/csmOn, 
+						internalSet/csmSet, 
+						QuickAccel/csmQuickAccel, 
+						QuickDecel/csmQuickDecel,
+						internalCurrentSpeed/csmCurrentSpeed, 
+						CruiseSpeed/csmCruiseSpeed]
 	||
 	run CarSpeedControl[]
-	end signal
+
 end module
