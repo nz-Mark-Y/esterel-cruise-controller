@@ -17,15 +17,15 @@ module CruiseStateFSM:
 			%OFF state
 			if state = 0 then
 				%Handle state changes
-				if pre(fsmOn) then
+				present pre(fsmOn) then
 					emit fsmCruiseState = ON;
 					state := 1;
-				end if;
+				end present;
 				exit T1;
 			end if;
 
 			%ON state
-			if state = 1 then
+			if state == 1 then
 				% Call the CruiseSpeedFlow submodule
 				run CruiseSpeedFlow[fsmOn/csmOn, 
 									fsmSet/csmSet, 
@@ -34,10 +34,10 @@ module CruiseStateFSM:
 									fsmSpeed/csmSpeed, 
 									fsmCruiseSpeed/csmCruiseSpeed]
 				%Handle state changes
-				if pre(fsmOff) then 
+				present pre(fsmOff) then 
 					emit fsmCruiseState = OFF;
 					state := 0;
-				end if;
+				end present;
 				if pre(?fsmBrake > PEDALSMIN) then
 					emit fsmCruiseState = STANDBY;
 					state := 2;
@@ -50,7 +50,7 @@ module CruiseStateFSM:
 			end if;
 
 			%STANDBY state
-			if state = 2 then
+			if state == 2 then
 				%Call the CruiseSpeedFlow submodule 
 				run CruiseSpeedFlow[fsmOn/csmOn, 
 									fsmSet/csmSet, 
@@ -59,10 +59,10 @@ module CruiseStateFSM:
 									fsmSpeed/csmSpeed, 
 									fsmCruiseSpeed/csmCruiseSpeed]
 				%Handle state changes
-				if pre(fsmOff) then 
+				present pre(fsmOff) then 
 					emit fsmCruiseState = OFF;
 					state := 0;
-				end if;
+				end present;
 				if pre(?fsmBrake < PEDALSMIN) and pre(?fsmSpeed) < SPEEDMAX and pre(?fsmSpeed) > SPEEDMIN then
 					emit fsmCruiseState = ON;
 					state := 1;
@@ -75,7 +75,7 @@ module CruiseStateFSM:
 			end if;
 
 			%DISABLE state
-			if state = 3 then
+			if state == 3 then
 				%Call the CruiseSpeedFlow submodule
 				run CruiseSpeedFlow[fsmOn/csmOn, 
 									fsmSet/csmSet, 
@@ -84,10 +84,10 @@ module CruiseStateFSM:
 									fsmSpeed/csmSpeed, 
 									fsmCruiseSpeed/csmCruiseSpeed]
 				%Handle state changes
-				if pre(fsmOff) then
+				present pre(fsmOff) then
 					emit fsmCruiseState = OFF;
 					state := 0;
-				end if;
+				end present;
 				if pre(?fsmAccel < PEDALSMIN) and pre(?fsmSpeed) < SPEEDMAX and pre(?fsmSpeed) > SPEEDMIN then
 					emit fsmCruiseState = ON;
 					state := 1;
@@ -115,17 +115,21 @@ module CruiseSpeedFlow:
 	var temp := 0.0 : float;
 
 	%Setting speed
-	if csmOn or csmSet then
+	present csmOn or csmSet then
 		temp := csmSpeed;
-	end if;
+	end present;
 
 	%Handling quick accelerations/decelerations
-	if csmQuickAccel and (temp != 0.0) then
-		temp := temp += SPEEDINC;
-	end if;
-	if csmQuickDevel and (temp != 0.0) then
-		temp := temp -= SPEEDINC;
-	end if;
+	present csmQuickAccel then
+		if (temp != 0.0) then
+			temp := temp += SPEEDINC;
+		end if;
+	end present;
+	present csmQuickDevel then
+		if (temp != 0.0) then
+			temp := temp -= SPEEDINC;
+		end if;
+	end present;
 
 	%Making sure speed stays within boundaries set
 	if temp > SPEEDMAX then
@@ -144,7 +148,10 @@ module CarSpeedControl:
 	constant KI : float = 0.5;
 	constant THROTTLESATMAX : float = 45.0;
 
-
+	output cscThrottleCmd : float;
+	loop
+	emit cscThrottleCmd(0.0);
+	end loop
 end module
 
 module cruiseController:
