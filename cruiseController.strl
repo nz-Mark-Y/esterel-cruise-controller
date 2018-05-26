@@ -137,15 +137,30 @@ module CruiseSpeedFlow:
 end module
 
 module CarSpeedControl:
-	constant KP : float;
-	constant KI : float;
-	constant THROTTLESATMAX : float;
-
+	input cscCruiseState : integer, cscCruiseSpeed : float, cscSpeed : float, cscAccel : float;
 	output cscThrottleCmd : float;
+
+	function regulateThrottle(boolean, float, float) : float;
+	
+	var toRegulate : boolean := false in
 	loop
-	emit cscThrottleCmd(0.0f);
-	pause;
-	end loop
+		if present(cscCruiseState) then
+			if (?cscCruiseState = 1) then
+				toRegulate = true;
+			else
+				toRegulate = false;
+		end if;
+
+		if toRegulate then
+			if (?cscCruiseState = 1) then
+				emit cscThrottleCmd(regulateThrottle(true, ?cscCruiseSpeed, ?cscSpeed));
+			else 
+				emit cscThrottleCmd(regulateThrottle(false, ?cscCruiseSpeed, ?cscSpeed));
+			end if;
+		else
+			emit cscThrottleCmd(?cscAccel);
+		pause;
+	end loop;
 end module
 
 module cruiseController:
@@ -165,6 +180,10 @@ module cruiseController:
 				signal CruiseSpeed/fsmCruiseSpeed; 
 				signal CruiseState/fsmCruiseState];
 	||
-	run CarSpeedControl[signal ThrottleCmd/cscThrottleCmd];
+	run CarSpeedControl[signal fsmCruiseState/cscCruiseState;
+						signal fsmCruiseSpeed/cscCruiseSpeed;
+						signal Speed/cscSpeed;
+						signal Accel/cscAccel;
+						signal ThrottleCmd/cscThrottleCmd];
 
 end module
