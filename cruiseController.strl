@@ -153,7 +153,7 @@ module CarSpeedControl:
 		end present;
 
 		if toRegulate then
-			if (?cscCruiseState = 2) then
+			if (?cscCruiseState = 2 and pre(?cscCruiseState = 1)) then
 				emit cscThrottleCmd(regulateThrottle(1, ?cscCruiseSpeed, ?cscSpeed));
 			else 
 				emit cscThrottleCmd(regulateThrottle(0, ?cscCruiseSpeed, ?cscSpeed));
