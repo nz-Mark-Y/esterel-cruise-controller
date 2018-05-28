@@ -8,42 +8,19 @@ module CruiseStateFSM:
 	output fsmCruiseSpeed : float;
 	output fsmCruiseState: integer;
 	
-	var state := 0 : integer in
+	var state := 1 : integer in
 	emit fsmCruiseSpeed(0.0f);
-	emit fsmCruiseState(0);
+	emit fsmCruiseState(1);
 	loop
 		%OFF state
-		if state = 0 then
+		if state = 1 then
 			%Handle state changes
 			present pre(fsmOn) then
-				emit fsmCruiseState(1);
-				state := 1;
+				emit fsmCruiseState(2);
+				state := 2;
 			end present;
 
 		%ON state
-		elsif state = 1 then
-			% Call the CruiseSpeedFlow submodule
-			run CruiseSpeedFlow[	signal fsmOn/csmOn;
-						signal fsmSet/csmSet; 
-						signal fsmQuickAccel/csmQuickAccel;
-						signal fsmQuickDecel/csmQuickDecel;
-						signal fsmSpeed/csmSpeed;
-						signal fsmCruiseSpeed/csmCruiseSpeed];
-			%Handle state changes
-			present pre(fsmOff) then 
-				emit fsmCruiseState(0);
-				state := 0;
-			else
-				if pre(?fsmBrake) > PEDALSMIN then
-					emit fsmCruiseState(2);
-					state := 2;
-				elsif pre(?fsmAccel) > PEDALSMIN or pre(?fsmSpeed) > SPEEDMAX or pre(?fsmSpeed) < SPEEDMIN then
-					emit fsmCruiseState(3);
-					state := 3;
-				end if;
-			end present;
-
-		%STANDBY state
 		elsif state = 2 then
 			% Call the CruiseSpeedFlow submodule
 			run CruiseSpeedFlow[	signal fsmOn/csmOn;
@@ -54,15 +31,38 @@ module CruiseStateFSM:
 						signal fsmCruiseSpeed/csmCruiseSpeed];
 			%Handle state changes
 			present pre(fsmOff) then 
-				emit fsmCruiseState(0);
-				state := 0;
+				emit fsmCruiseState(1);
+				state := 1;
 			else
-				if pre(?fsmBrake) < PEDALSMIN and (pre(?fsmSpeed) > SPEEDMAX or pre(?fsmSpeed) < SPEEDMIN) then
+				if pre(?fsmBrake) > PEDALSMIN then
 					emit fsmCruiseState(3);
 					state := 3;
+				elsif pre(?fsmAccel) > PEDALSMIN or pre(?fsmSpeed) > SPEEDMAX or pre(?fsmSpeed) < SPEEDMIN then
+					emit fsmCruiseState(4);
+					state := 4;
+				end if;
+			end present;
+
+		%STANDBY state
+		elsif state = 3 then
+			% Call the CruiseSpeedFlow submodule
+			run CruiseSpeedFlow[	signal fsmOn/csmOn;
+						signal fsmSet/csmSet; 
+						signal fsmQuickAccel/csmQuickAccel;
+						signal fsmQuickDecel/csmQuickDecel;
+						signal fsmSpeed/csmSpeed;
+						signal fsmCruiseSpeed/csmCruiseSpeed];
+			%Handle state changes
+			present pre(fsmOff) then 
+				emit fsmCruiseState(1);
+				state := 1;
+			else
+				if pre(?fsmBrake) < PEDALSMIN and (pre(?fsmSpeed) > SPEEDMAX or pre(?fsmSpeed) < SPEEDMIN) then
+					emit fsmCruiseState(4);
+					state := 4;
 				elsif pre(?fsmBrake) < PEDALSMIN and pre(?fsmSpeed) < SPEEDMAX and pre(?fsmSpeed) > SPEEDMIN then
-					emit fsmCruiseState(1);
-					state := 1;
+					emit fsmCruiseState(2);
+					state := 2;
 				end if;
 			end present;
 
@@ -77,15 +77,15 @@ module CruiseStateFSM:
 						signal fsmCruiseSpeed/csmCruiseSpeed];
 			%Handle state changes
 			present pre(fsmOff) then
-				emit fsmCruiseState(0);
-				state := 0;
+				emit fsmCruiseState(1);
+				state := 1;
 			else
 				if pre(?fsmBrake) > PEDALSMIN then
+					emit fsmCruiseState(3);
+					state := 3;
+				elsif pre(?fsmAccel) < PEDALSMIN and pre(?fsmSpeed) < SPEEDMAX and pre(?fsmSpeed) > SPEEDMIN then
 					emit fsmCruiseState(2);
 					state := 2;
-				elsif pre(?fsmAccel) < PEDALSMIN and pre(?fsmSpeed) < SPEEDMAX and pre(?fsmSpeed) > SPEEDMIN then
-					emit fsmCruiseState(1);
-					state := 1;
 				end if;		
 			end present;
 		end if;
@@ -140,27 +140,31 @@ module CarSpeedControl:
 	input cscCruiseState : integer, cscCruiseSpeed : float, cscSpeed : float, cscAccel : float;
 	output cscThrottleCmd : float;
 
-	function regulateThrottle(boolean, float, float) : float;
+	function regulateThrottle(integer, float, float) : float;
 	
-	var toRegulate : boolean := false in
+	var toRegulate := false : boolean in
 	loop
-		if present(cscCruiseState) then
-			if (?cscCruiseState = 1) then
-				toRegulate = true;
+		present(cscCruiseState) then
+			if (?cscCruiseState = 2) then
+				toRegulate := true;
 			else
-				toRegulate = false;
-		end if;
+				toRegulate := false;
+			end if;
+		end present;
 
 		if toRegulate then
-			if (?cscCruiseState = 1) then
-				emit cscThrottleCmd(regulateThrottle(true, ?cscCruiseSpeed, ?cscSpeed));
+			if (?cscCruiseState = 2) then
+				emit cscThrottleCmd(regulateThrottle(1, ?cscCruiseSpeed, ?cscSpeed));
 			else 
-				emit cscThrottleCmd(regulateThrottle(false, ?cscCruiseSpeed, ?cscSpeed));
+				emit cscThrottleCmd(regulateThrottle(0, ?cscCruiseSpeed, ?cscSpeed));
 			end if;
 		else
 			emit cscThrottleCmd(?cscAccel);
+		end if;
+
 		pause;
-	end loop;
+	end loop
+	end var
 end module
 
 module cruiseController:
@@ -180,10 +184,10 @@ module cruiseController:
 				signal CruiseSpeed/fsmCruiseSpeed; 
 				signal CruiseState/fsmCruiseState];
 	||
-	run CarSpeedControl[signal fsmCruiseState/cscCruiseState;
-						signal fsmCruiseSpeed/cscCruiseSpeed;
-						signal Speed/cscSpeed;
-						signal Accel/cscAccel;
-						signal ThrottleCmd/cscThrottleCmd];
+	run CarSpeedControl[signal CruiseState/cscCruiseState;
+				signal CruiseSpeed/cscCruiseSpeed;
+				signal Speed/cscSpeed;
+				signal Accel/cscAccel;
+				signal ThrottleCmd/cscThrottleCmd];
 
 end module

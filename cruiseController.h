@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 
 #define SPEEDMIN 30.0
 #define SPEEDMAX 150.0
@@ -6,4 +7,6 @@
 #define SPEEDINC 2.5 
 #define KP 8.112
 #define KI 0.5
-#define THROTTLESATMAX = 45.0
+#define THROTTLESATMAX 45.0
+
+float regulateThrottle(int , float , float );
